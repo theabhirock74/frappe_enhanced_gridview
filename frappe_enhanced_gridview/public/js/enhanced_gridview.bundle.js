@@ -1,6 +1,59 @@
 import GridRow from './grid_row';
 import Grid from './grid';
 
+// A wheel gesture (trackpad flick / mouse wheel spin) fires a burst of events. We track the
+// burst globally so a grid only steals a plain vertical wheel when the gesture *started* over
+// it, instead of trapping a page scroll that merely passes over the grid.
+const WHEEL_GESTURE = { last_time: 0, fresh: true, owner: null };
+const WHEEL_GESTURE_GAP = 200;
+let wheel_tracker_bound = false;
+
+function bind_wheel_gesture_tracker() {
+	if (wheel_tracker_bound) return;
+	wheel_tracker_bound = true;
+
+	document.addEventListener(
+		"wheel",
+		() => {
+			let now = Date.now();
+			WHEEL_GESTURE.fresh = now - WHEEL_GESTURE.last_time > WHEEL_GESTURE_GAP;
+			if (WHEEL_GESTURE.fresh) {
+				WHEEL_GESTURE.owner = null;
+			}
+			WHEEL_GESTURE.last_time = now;
+		},
+		{ capture: true, passive: true }
+	);
+}
+
+function claim_wheel_gesture(owner) {
+	if (WHEEL_GESTURE.owner === owner) return true;
+	if (WHEEL_GESTURE.owner || !WHEEL_GESTURE.fresh) return false;
+	WHEEL_GESTURE.owner = owner;
+	return true;
+}
+
+function release_wheel_gesture(owner) {
+	if (WHEEL_GESTURE.owner === owner) {
+		WHEEL_GESTURE.owner = "page";
+	}
+}
+
+// elements that own the pointer themselves - dragging on them must not pan the grid
+const NO_DRAG_SCROLL = [
+	"input",
+	"select",
+	"textarea",
+	"button",
+	"a",
+	"[contenteditable='true']",
+	".sortable-handle",
+	".grid-insert-row",
+	".grid-insert-row-below",
+	".grid-duplicate-row",
+	".grid-delete-row",
+].join(", ");
+
 class Custom_GridRow extends GridRow {
 
 	validate_columns_width() {
@@ -54,7 +107,7 @@ class Custom_Grid extends Grid {
 							</div>
 						</div>
 					</div>
-					<input type="range" min="1" max="100" value="1" class="enhanced-slider">
+					<input type="range" min="0" max="100" value="0" class="enhanced-slider">
 				</div>
 				<div class="small form-clickable-section grid-footer">
 					<div class="flex justify-between">
@@ -104,15 +157,13 @@ class Custom_Grid extends Grid {
 		this.form_grid.addClass("relative-important");
 		this.form_grid_container = this.wrapper.find(".form-grid-container");
 		this.enhanced_slider = this.wrapper.find(".enhanced-slider");
-		let me = this
-		this.enhanced_slider.on("input", function (event) {
-			const value = event.target.value;
-			me.form_grid.css("left", `-${value}px`)
-			me.setup_scrollable_width()
-		})
+		this.scroll_offset = 0;
 
+		this.enhanced_slider.on("input", (event) => {
+			this.set_scroll_offset(parseFloat(event.target.value));
+		});
 
-
+		this.setup_horizontal_scroll();
 
 
 		this.setup_add_row();
@@ -295,35 +346,178 @@ class Custom_Grid extends Grid {
 	}
 
 
-	setup_scrollable_width() {
-		let width = 200
-		this.visible_columns.forEach(column => {
+	get_grid_width() {
+		let width = 200;
+		(this.visible_columns || []).forEach(column => {
 			width += column[1] * 50 + 100
 		});
-		if (width > this.form_grid_container[0].clientWidth) {
-			this.enhanced_slider.prop("max", width - this.form_grid_container[0].clientWidth)
-			this.enhanced_slider.prop("style", "display:block")
-		} else {
-			this.form_grid.css("left", `0px`)
-			this.enhanced_slider.prop("max", this.form_grid_container[0].clientWidth)
-			this.enhanced_slider.prop("style", "display:none")
-			this.enhanced_slider.prop("value", 0)
-		}
+		return width;
+	}
+
+	get_max_scroll_offset() {
+		if (!this.form_grid_container || !this.form_grid_container[0]) return 0;
+		return Math.max(this.get_grid_width() - this.form_grid_container[0].clientWidth, 0);
+	}
+
+	// while a row is expanded into its form the grid is not offset, so panning is meaningless
+	is_scrollable() {
+		return this.form_grid.hasClass("relative-important") && this.get_max_scroll_offset() > 0;
+	}
+
+	set_scroll_offset(value) {
+		let max = this.get_max_scroll_offset();
+		let offset = Math.min(Math.max(value || 0, 0), max);
+
+		this.scroll_offset = offset;
+		this.form_grid.css("left", `-${offset}px`);
+		this.enhanced_slider.val(offset);
+		return offset;
+	}
+
+	setup_scrollable_width() {
+		if (!this.form_grid_container || !this.form_grid_container[0]) return;
+
+		let max = this.get_max_scroll_offset();
+		this.enhanced_slider.prop("max", max || this.form_grid_container[0].clientWidth);
+		this.enhanced_slider.toggle(max > 0);
+		this.set_scroll_offset(max > 0 ? this.scroll_offset : 0);
 	}
 
 	verify_overflow_columns_width() {
-		let width = 200
-		this.visible_columns.forEach(column => {
-			width += column[1] * 50 + 100
+		if (!this.form_grid_container || !this.form_grid_container[0]) return;
+
+		if (this.get_max_scroll_offset() > 0) {
+			this.form_grid_container.addClass('enhanced-grid-container')
+		}
+	}
+
+	setup_horizontal_scroll() {
+		let container = this.form_grid_container && this.form_grid_container[0];
+		if (!container) return;
+
+		bind_wheel_gesture_tracker();
+
+		container.addEventListener("wheel", (e) => this.on_wheel(e), { passive: false });
+		this.setup_drag_scroll(container);
+
+		// keep the field reachable when it is tabbed into from outside the visible area
+		this.form_grid_container.on("focusin", (e) => this.scroll_into_view(e.target));
+
+		if (window.ResizeObserver) {
+			let observer = new ResizeObserver(
+				frappe.utils.debounce(() => this.setup_scrollable_width(), 100)
+			);
+			observer.observe(container);
+		}
+	}
+
+	on_wheel(e) {
+		if (!this.is_scrollable()) return;
+
+		let is_horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+		let delta = is_horizontal ? e.deltaX : e.deltaY;
+		if (!delta) return;
+
+		// a plain vertical wheel only pans the grid when the gesture began here,
+		// so an ongoing page scroll passing over the grid is left alone
+		if (!is_horizontal && !e.shiftKey && !claim_wheel_gesture(this)) return;
+
+		if (e.deltaMode === 1) {
+			delta *= 16;
+		} else if (e.deltaMode === 2) {
+			delta *= this.form_grid_container[0].clientWidth;
+		}
+
+		let current = this.scroll_offset || 0;
+		if (this.set_scroll_offset(current + delta) === current) {
+			// hit either edge, hand the gesture back to the page
+			release_wheel_gesture(this);
+			return;
+		}
+
+		e.preventDefault();
+	}
+
+	setup_drag_scroll(container) {
+		let start_x = 0;
+		let start_offset = 0;
+		let pointer_id = null;
+		let dragging = false;
+		let drag_completed = false;
+
+		container.addEventListener("pointerdown", (e) => {
+			drag_completed = false;
+			if (e.pointerType === "mouse" && e.button !== 0) return;
+			if (!this.is_scrollable()) return;
+			if (e.target.closest && e.target.closest(NO_DRAG_SCROLL)) return;
+
+			start_x = e.clientX;
+			start_offset = this.scroll_offset || 0;
+			pointer_id = e.pointerId;
+			dragging = false;
 		});
 
-		if (width > this.form_grid_container[0].clientWidth) {
-			this.form_grid_container.addClass('enhanced-grid-container')
-			this.enhanced_slider.prop("style", "display:block")
+		container.addEventListener("pointermove", (e) => {
+			if (pointer_id !== e.pointerId) return;
+
+			let diff = start_x - e.clientX;
+			if (!dragging) {
+				if (Math.abs(diff) < 5) return;
+				dragging = true;
+				this.form_grid_container.addClass("is-dragging");
+				container.setPointerCapture && container.setPointerCapture(pointer_id);
+			}
+
+			e.preventDefault();
+			this.set_scroll_offset(start_offset + diff);
+		});
+
+		let end_drag = (e) => {
+			if (pointer_id !== e.pointerId) return;
+			if (dragging) {
+				this.form_grid_container.removeClass("is-dragging");
+				container.releasePointerCapture && container.releasePointerCapture(pointer_id);
+				drag_completed = true;
+			}
+			pointer_id = null;
+			dragging = false;
+		};
+
+		container.addEventListener("pointerup", end_drag);
+		container.addEventListener("pointercancel", end_drag);
+
+		// a pan ends with a click on whatever cell the pointer landed on - drop it
+		container.addEventListener(
+			"click",
+			(e) => {
+				if (!drag_completed) return;
+				drag_completed = false;
+				e.preventDefault();
+				e.stopPropagation();
+			},
+			true
+		);
+	}
+
+	scroll_into_view(element) {
+		if (!element || !this.is_scrollable()) return;
+
+		let container_rect = this.form_grid_container[0].getBoundingClientRect();
+		let rect = element.getBoundingClientRect();
+		if (!rect.width && !rect.height) return;
+
+		let padding = 20;
+		let offset = this.scroll_offset || 0;
+
+		if (rect.right > container_rect.right - padding) {
+			offset += rect.right - container_rect.right + padding;
+		} else if (rect.left < container_rect.left + padding) {
+			offset -= container_rect.left + padding - rect.left;
 		} else {
-			this.enhanced_slider.prop("style", "display:none")
-			this.enhanced_slider.prop("value", 0)
+			return;
 		}
+
+		this.set_scroll_offset(offset);
 	}
 
 }

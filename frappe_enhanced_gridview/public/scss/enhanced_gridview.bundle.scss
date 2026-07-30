@@ -3,6 +3,17 @@
     border: 1px solid var(--table-border-color);
     border-radius: var(--border-radius-md);
     overflow-x: clip !important;
+    // vertical swipes still scroll the page, horizontal ones are panned by JS
+    touch-action: pan-y;
+
+    &.is-dragging {
+        user-select: none;
+        cursor: grabbing;
+
+        .grid-row {
+            cursor: grabbing;
+        }
+    }
 
     .form-grid {
         border: none;
