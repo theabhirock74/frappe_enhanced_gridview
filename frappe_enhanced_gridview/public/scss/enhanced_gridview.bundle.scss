@@ -1,111 +1,142 @@
 .form-grid-container.enhanced-grid-container {
-    // overflow-y: auto;
     border: 1px solid var(--table-border-color);
     border-radius: var(--border-radius-md);
-    overflow-x: clip !important;
-    // vertical swipes still scroll the page, horizontal ones are panned by JS
-    touch-action: pan-y;
-
-    &.is-dragging {
-        user-select: none;
-        cursor: grabbing;
-
-        .grid-row {
-            cursor: grabbing;
-        }
-    }
+    overflow-x: auto !important;
 
     .form-grid {
         border: none;
         border-radius: unset;
+        width: max-content;
+        min-width: 100%;
     }
 
     .form-grid.relative-important {
         position: relative !important;
     }
 
-    .grid-heading-row {
-        height: auto;
+    &.has-sticky-columns {
+        .grid-heading-row {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            background-color: var(--subtle-fg);
+        }
 
-        .grid-row .static-area.ellipsis {
-            text-overflow: unset;
-            white-space: normal;
+        .grid-heading-row .grid-static-col.grid-sticky-col,
+        .grid-heading-row .row-check,
+        .grid-heading-row .row-index {
+            background-color: var(--subtle-fg);
+        }
+
+        .grid-body .grid-static-col.grid-sticky-col,
+        .grid-body .row-check,
+        .grid-body .row-index {
+            background-color: var(--bg-color);
+        }
+
+        .grid-static-col.grid-sticky-last,
+        .row-index.grid-sticky-last,
+        .row-check.grid-sticky-last {
+            box-shadow: 2px 0 4px rgba(0, 0, 0, 0.08);
         }
     }
 
-    .grid-heading-row .grid-static-col,
-    .grid-heading-row .row-check,
-    .grid-heading-row .row-index {
-        height: auto !important;
-        background-color: var(--subtle-fg);
-    }
-
-    .grid-row {
+    .grid-heading-row,
+    .grid-body .grid-row {
         .data-row.row {
             flex-wrap: nowrap;
-            // display: grid;
-            // grid-auto-flow: column;
 
             .col {
+                flex-shrink: 0;
                 max-width: 100px !important;
                 min-width: 100px !important;
-                border-bottom: 1px solid var(--table-border-color);
-                padding-bottom: 1px;
-
-                .field-area {
-                    border-bottom: 1px solid var(--table-border-color);
-
-                }
             }
 
             .col.custom-1 {
                 min-width: 150px !important;
+                max-width: 150px !important;
             }
 
             .col.custom-2 {
                 min-width: 200px !important;
+                max-width: 200px !important;
             }
 
             .col.custom-3 {
                 min-width: 250px !important;
+                max-width: 250px !important;
             }
 
             .col.custom-4 {
                 min-width: 300px !important;
+                max-width: 300px !important;
             }
 
             .col.custom-5 {
                 min-width: 350px !important;
+                max-width: 350px !important;
             }
 
             .col.custom-6 {
                 min-width: 400px !important;
+                max-width: 400px !important;
             }
 
             .col.custom-7 {
                 min-width: 450px !important;
+                max-width: 450px !important;
             }
 
             .col.custom-8 {
                 min-width: 500px !important;
+                max-width: 500px !important;
             }
 
             .col.custom-9 {
                 min-width: 550px !important;
+                max-width: 550px !important;
             }
 
             .col.custom-10 {
                 min-width: 600px !important;
+                max-width: 600px !important;
             }
-
 
             .row-check,
             .row-index {
                 max-width: 50px !important;
                 min-width: 50px !important;
             }
+        }
+    }
 
+    .grid-heading-row {
+        .data-row.row {
+            .col {
+                height: 32px;
+                display: flex;
+                align-items: center;
+            }
 
+            .grid-static-col .static-area.ellipsis {
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                overflow: hidden;
+                width: 100%;
+            }
+        }
+    }
+
+    .grid-body .grid-row {
+        .data-row.row {
+            .col {
+                border-bottom: 1px solid var(--table-border-color);
+                padding-bottom: 1px;
+
+                .field-area {
+                    border-bottom: 1px solid var(--table-border-color);
+                }
+            }
         }
     }
 

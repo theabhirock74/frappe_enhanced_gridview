@@ -694,6 +694,10 @@ export default class GridRow {
 		this.grid.visible_columns.forEach((col, ci) => {
 			// to get update df for the row
 			let df = fields.find((field) => field?.fieldname === col[0].fieldname);
+			const field_meta = this.grid.fields_map?.[df?.fieldname];
+			if (df && field_meta?.sticky_in_grid) {
+				df.sticky_in_grid = field_meta.sticky_in_grid;
+			}
 
 			this.set_dependant_property(df);
 
@@ -826,9 +830,16 @@ export default class GridRow {
 			title = __("Password cannot be filtered");
 		}
 
+		let search_class = df.sticky_in_grid ? " grid-sticky-col" : "";
 		let $col = $(
-			'<div class="col grid-static-col col-xs-' + colsize + ' search"></div>'
-		).appendTo(this.row);
+			'<div class="col grid-static-col col-xs- custom-' +
+				colsize +
+				" search" +
+				search_class +
+				'"></div>'
+		)
+			.attr("data-fieldname", df.fieldname)
+			.appendTo(this.row);
 
 		let $search_input = $(`
 			<input
@@ -883,6 +894,7 @@ export default class GridRow {
 				? " text-right"
 				: "";
 		add_class += ["Check"].indexOf(df.fieldtype) !== -1 ? " text-center" : "";
+		add_class += df.sticky_in_grid ? " grid-sticky-col" : "";
 
 		let grid;
 		let grid_container;
@@ -902,7 +914,7 @@ export default class GridRow {
 
 			let container_width = grid_container.getBoundingClientRect().width;
 			let container_left = grid_container.getBoundingClientRect().left;
-			let grid_left = parseFloat(grid.style.left);
+			let scroll_left = grid_container.scrollLeft || 0;
 			let element_left = el.offset().left;
 			let fieldtype = el.data("fieldtype");
 
@@ -918,11 +930,11 @@ export default class GridRow {
 				offset_left = element_position_x - 250;
 			}
 			if (element_screen_x < 0) {
-				grid.style.left = `${grid_left - element_screen_x}px`;
+				grid_container.scrollLeft = scroll_left - element_screen_x;
 			} else if (offset_left < 0) {
-				grid.style.left = `${grid_left + offset_left}px`;
+				grid_container.scrollLeft = scroll_left + offset_left;
 			} else if (offset_right < 0) {
-				grid.style.left = `${grid_left + offset_right}px`;
+				grid_container.scrollLeft = scroll_left - offset_right;
 			}
 		}
 
@@ -958,13 +970,10 @@ export default class GridRow {
 				grid_container = $(event.currentTarget).closest(".form-grid-container")[0];
 				grid = $(event.currentTarget).closest(".form-grid")[0];
 
-				grid.style.position != "relative" && $(grid).css("position", "relative");
-				!grid.style.left && $(grid).css("left", 0);
-
 				start_x = event.touches[0].clientX;
 				start_y = event.touches[0].clientY;
 
-				inital_position_x = -parseFloat(grid.style.left || 0) + start_x;
+				inital_position_x = (grid_container.scrollLeft || 0) + start_x;
 			})
 			// calculate X and Y movement based on touch events.
 			.on("touchmove", function (event) {
@@ -999,7 +1008,7 @@ export default class GridRow {
 						grid_start = grid_end;
 					}
 
-					grid.style.left = `${frappe.utils.is_rtl() ? "" : "-"}${grid_start}px`;
+					grid_container.scrollLeft = grid_start;
 				}
 			})
 			.on("touchend", function () {

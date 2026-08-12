@@ -8,6 +8,15 @@ app_email = "info@nesscale.com"
 app_license = "mit"
 # required_apps = []
 
+fixtures = [
+	{
+		"dt": "Custom Field",
+		"filters": [["name", "in", ["Customize Form Field-sticky_in_grid"]]],
+	}
+]
+
+from frappe_enhanced_gridview.patches import customize_form as _customize_form_patch  # noqa: F401
+
 # Includes in <head>
 # ------------------
 
