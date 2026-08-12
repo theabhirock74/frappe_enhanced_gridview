@@ -23,24 +23,43 @@
         position: relative !important;
     }
 
-    &.has-sticky-columns {
-        .grid-heading-row {
-            position: sticky;
-            top: 0;
-            z-index: 5;
-            background-color: var(--subtle-fg);
+    .grid-heading-row {
+        background-color: var(--subtle-fg);
+
+        .data-row.row > .col {
+            background-color: var(--subtle-fg) !important;
         }
 
+        &.with-filter .filter-row .data-row.row > .col {
+            background-color: var(--bg-color) !important;
+        }
+
+        &.is-page-sticky {
+            // horizontal scroll synced via scrollLeft in JS
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+
+            &::-webkit-scrollbar {
+                display: none;
+            }
+        }
+    }
+
+    .enhanced-grid-heading-placeholder {
+        display: none;
+    }
+
+    &.has-sticky-columns {
         .grid-heading-row .grid-static-col.grid-sticky-col,
         .grid-heading-row .row-check,
         .grid-heading-row .row-index {
-            background-color: var(--subtle-fg);
+            background-color: var(--subtle-fg) !important;
         }
 
         .grid-body .grid-static-col.grid-sticky-col,
         .grid-body .row-check,
         .grid-body .row-index {
-            background-color: var(--bg-color);
+            background-color: var(--bg-color) !important;
         }
 
         .grid-static-col.grid-sticky-last,

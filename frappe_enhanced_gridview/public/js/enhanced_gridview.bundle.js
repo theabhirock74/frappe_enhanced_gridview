@@ -176,6 +176,95 @@ class Custom_Grid extends Grid {
 		});
 	}
 
+	get_page_sticky_top() {
+		let top_offset = parseInt(
+			getComputedStyle(document.documentElement).getPropertyValue("--navbar-height"),
+			10
+		);
+		if (Number.isNaN(top_offset)) {
+			top_offset = 48;
+		}
+
+		const $tabs = this.frm?.wrapper?.find(".form-tabs-list");
+		if ($tabs?.length) {
+			const tabs_bottom = Math.ceil($tabs[0].getBoundingClientRect().bottom);
+			top_offset = Math.max(top_offset, tabs_bottom);
+		}
+
+		return top_offset;
+	}
+
+	update_page_header_sticky() {
+		const $heading = this.wrapper?.find(".form-grid > .grid-heading-row").first();
+		const $container = this.form_grid_container;
+		if (!$heading?.length || !$container?.length) {
+			return;
+		}
+
+		const sticky_top = this.get_page_sticky_top();
+		const container_rect = $container[0].getBoundingClientRect();
+		const heading_height = $heading.outerHeight() || 0;
+		const scroll_left = $container.scrollLeft() || 0;
+
+		let $placeholder = this.wrapper.find(".enhanced-grid-heading-placeholder");
+		if (!$placeholder.length) {
+			$placeholder = $('<div class="enhanced-grid-heading-placeholder"></div>');
+			$heading.after($placeholder);
+		}
+
+		const anchor_top = $heading.hasClass("is-page-sticky")
+			? $placeholder[0].getBoundingClientRect().top
+			: $heading[0].getBoundingClientRect().top;
+
+		const should_stick =
+			anchor_top < sticky_top && container_rect.bottom > sticky_top + heading_height;
+
+		if (should_stick) {
+			if (!$heading.hasClass("is-page-sticky")) {
+				$placeholder.css({
+					display: "block",
+					height: `${heading_height}px`,
+				});
+				$heading.addClass("is-page-sticky");
+			}
+
+			$heading.css({
+				position: "fixed",
+				top: `${sticky_top}px`,
+				left: `${container_rect.left}px`,
+				width: `${container_rect.width}px`,
+				zIndex: 6,
+				overflow: "hidden",
+				backgroundColor: "var(--subtle-fg)",
+				boxShadow: "0 1px 0 var(--table-border-color)",
+			});
+
+			const grid_width = Math.round(this.form_grid.outerWidth()) || container_rect.width;
+			$heading.children(".grid-row").css({
+				width: `${grid_width}px`,
+				minWidth: `${grid_width}px`,
+			});
+			$heading[0].scrollLeft = scroll_left;
+		} else if ($heading.hasClass("is-page-sticky")) {
+			$heading.removeClass("is-page-sticky").css({
+				position: "",
+				top: "",
+				left: "",
+				width: "",
+				zIndex: "",
+				overflow: "",
+				backgroundColor: "",
+				boxShadow: "",
+			});
+			$heading.children(".grid-row").css({
+				width: "",
+				minWidth: "",
+			});
+			$heading[0].scrollLeft = 0;
+			$placeholder.css({ display: "none", height: "" });
+		}
+	}
+
 	setup_sticky_listeners() {
 		if (this._sticky_listeners_setup) {
 			return;
@@ -190,9 +279,14 @@ class Custom_Grid extends Grid {
 			me.sync_column_widths();
 			me.setup_sticky_columns();
 			me.form_grid_container?.scrollLeft(scroll_left);
+			me.update_page_header_sticky();
 		}, 100);
 
+		this._on_page_scroll = () => me.update_page_header_sticky();
+
 		$(window).on(`resize${namespace}`, this._recalculate_sticky_layout);
+		$(window).on(`scroll${namespace}`, this._on_page_scroll);
+		this.form_grid_container.on("scroll", this._on_page_scroll);
 	}
 
 	make() {
@@ -336,6 +430,7 @@ class Custom_Grid extends Grid {
 			this.sync_column_widths();
 			this.setup_sticky_columns();
 			this.form_grid_container?.scrollLeft(scroll_left);
+			this.update_page_header_sticky();
 		});
 	}
 
@@ -494,6 +589,7 @@ class Custom_Grid extends Grid {
 		requestAnimationFrame(() => {
 			this.sync_column_widths();
 			this.setup_sticky_columns();
+			this.update_page_header_sticky();
 		});
 	}
 
