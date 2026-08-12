@@ -2,6 +2,15 @@
     border: 1px solid var(--table-border-color);
     border-radius: var(--border-radius-md);
     overflow-x: auto !important;
+    // Keep scroll for sticky columns; hide native bar — use .enhanced-slider only.
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+
+    &::-webkit-scrollbar {
+        display: none;
+        width: 0;
+        height: 0;
+    }
 
     .form-grid {
         border: none;
