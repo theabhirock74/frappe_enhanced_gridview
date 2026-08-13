@@ -17,6 +17,7 @@
         border-radius: unset;
         width: max-content;
         min-width: 100%;
+        position: relative;
     }
 
     .form-grid.relative-important {
@@ -35,18 +36,27 @@
         }
 
         &.is-page-sticky {
-            // horizontal scroll synced via scrollLeft in JS
             scrollbar-width: none;
             -ms-overflow-style: none;
 
             &::-webkit-scrollbar {
                 display: none;
             }
+
+            .data-row.row > .col {
+                background-color: var(--subtle-fg) !important;
+            }
+
+            &.with-filter .filter-row .data-row.row > .col {
+                background-color: var(--bg-color) !important;
+            }
         }
     }
 
     .enhanced-grid-heading-placeholder {
         display: none;
+        width: 100%;
+        pointer-events: none;
     }
 
     &.has-sticky-columns {
@@ -201,5 +211,38 @@
         height: 5px;
         background-color: grey;
         cursor: pointer;
+    }
+}
+
+// Sticky clone is appended to body (outside form card overflow:hidden).
+.grid-heading-row.enhanced-grid-sticky-clone {
+    visibility: visible !important;
+    opacity: 1 !important;
+    background-color: var(--subtle-fg) !important;
+
+    .data-row.row > .col {
+        background-color: var(--subtle-fg) !important;
+        height: 32px;
+        display: flex;
+        align-items: center;
+    }
+
+    &.with-filter .filter-row .data-row.row > .col {
+        background-color: var(--bg-color) !important;
+    }
+
+    .data-row.row {
+        flex-wrap: nowrap;
+
+        .col {
+            flex-shrink: 0;
+        }
+    }
+
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+
+    &::-webkit-scrollbar {
+        display: none;
     }
 }
