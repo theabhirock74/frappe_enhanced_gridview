@@ -20,14 +20,16 @@ class Custom_GridRow extends GridRow {
 	}
 
 	show_form() {
-		super.show_form()
+		super.show_form();
 
 		$(this.grid.form_grid).removeClass("relative-important");
+		this.grid.enter_row_form_mode?.(this);
 	}
 	hide_form() {
-		super.hide_form()
+		super.hide_form();
 
 		$(this.grid.form_grid).addClass("relative-important");
+		this.grid.leave_row_form_mode?.(this);
 	}
 }
 
@@ -261,7 +263,7 @@ class Custom_Grid extends Grid {
 			width: `${Math.round(container_rect.width)}px`,
 			height: `${heading_height}px`,
 			minHeight: `${heading_height}px`,
-			zIndex: 1025,
+			zIndex: 1010,
 			overflow: "hidden",
 			display: "block",
 			visibility: "visible",
@@ -378,6 +380,13 @@ class Custom_Grid extends Grid {
 	}
 
 	_update_page_header_sticky() {
+		if (this._row_form_open) {
+			const $heading = this.wrapper?.find(".form-grid > .grid-heading-row").first();
+			const $placeholder = this.wrapper?.find(".enhanced-grid-heading-placeholder");
+			this.clear_page_header_sticky($heading, $placeholder);
+			return;
+		}
+
 		const $heading = this.wrapper?.find(".form-grid > .grid-heading-row").first();
 		const $container = this.form_grid_container;
 		const $grid_field = this.wrapper;
@@ -390,7 +399,7 @@ class Custom_Grid extends Grid {
 		const field_rect = $grid_field[0].getBoundingClientRect();
 		const heading_height =
 			this._sticky_heading_height || Math.round($heading.outerHeight()) || 0;
-		const scroll_left = $container.scrollLeft() || 0;
+		const scroll_left = this.get_horizontal_scroll_left();
 
 		let $placeholder = this.wrapper.find(".enhanced-grid-heading-placeholder");
 		if (!$placeholder.length) {
@@ -445,6 +454,74 @@ class Custom_Grid extends Grid {
 		);
 	}
 
+	get_scroll_container() {
+		return this.form_grid_scroll_area?.length
+			? this.form_grid_scroll_area
+			: this.form_grid_container;
+	}
+
+	get_horizontal_scroll_left() {
+		return this.get_scroll_container()?.scrollLeft() || 0;
+	}
+
+	set_horizontal_scroll_left(scroll_left) {
+		this.get_scroll_container()?.scrollLeft(scroll_left);
+	}
+
+	enter_row_form_mode() {
+		this._row_form_open = true;
+
+		const $heading = this.wrapper?.find(".form-grid > .grid-heading-row").first();
+		const $placeholder = this.wrapper?.find(".enhanced-grid-heading-placeholder");
+		this.clear_page_header_sticky($heading, $placeholder);
+		this._sticky_heading_height = null;
+
+		this._saved_form_grid_min_width = this.form_grid?.css("min-width") || "";
+		this._saved_scroll_left = this.get_horizontal_scroll_left();
+		this.set_horizontal_scroll_left(0);
+		this.form_grid?.css({
+			"min-width": "100%",
+			width: "100%",
+		});
+		this.form_grid_container?.addClass("has-open-row-form");
+		this.enhanced_slider?.prop("style", "display:none");
+	}
+
+	leave_row_form_mode() {
+		this._row_form_open = false;
+		this.form_grid_container?.removeClass("has-open-row-form");
+
+		if (this._saved_form_grid_min_width) {
+			this.form_grid?.css("min-width", this._saved_form_grid_min_width);
+		}
+		this.form_grid?.css("width", "max-content");
+		this._saved_form_grid_min_width = null;
+
+		requestAnimationFrame(() => {
+			this.setup_scrollable_width();
+			this.set_horizontal_scroll_left(this._saved_scroll_left || 0);
+			this._saved_scroll_left = null;
+			this.update_page_header_sticky();
+		});
+	}
+
+	close_open_grid_dropdowns() {
+		// Don't steal focus from the standard row editor while it is open.
+		if (this._row_form_open) {
+			return;
+		}
+		this.wrapper
+			?.find(".awesomplete > ul:not([hidden]), .awesomplete > [role='listbox']:not([hidden])")
+			.each(function () {
+				const input = $(this).siblings("input")[0] || $(this).parent().find("input")[0];
+				if (input) {
+					$(input).trigger("blur");
+					input.dispatchEvent(new Event("awesomplete-close", { bubbles: true }));
+				}
+			});
+		this.wrapper?.find("input:focus").trigger("blur");
+	}
+
 	setup_sticky_listeners() {
 		if (this._sticky_listeners_setup) {
 			return;
@@ -455,14 +532,23 @@ class Custom_Grid extends Grid {
 		const namespace = `.enhanced-grid-${this.df?.fieldname || this.doctype || "grid"}`;
 
 		this._recalculate_sticky_layout = frappe.utils.debounce(() => {
-			const scroll_left = me.form_grid_container?.scrollLeft() || 0;
+			const scroll_left = me.get_horizontal_scroll_left();
 			me.sync_column_widths();
 			me.setup_sticky_columns();
-			me.form_grid_container?.scrollLeft(scroll_left);
+			me.set_horizontal_scroll_left(scroll_left);
 			me.update_page_header_sticky();
 		}, 100);
 
-		this._on_page_scroll = () => {
+		this._on_page_scroll = (event) => {
+			const target = event?.target;
+			if (
+				target?.closest?.(
+					".awesomplete > ul, .awesomplete > [role='listbox'], .datepicker"
+				)
+			) {
+				return;
+			}
+			me.close_open_grid_dropdowns();
 			if (me._sticky_raf) {
 				return;
 			}
@@ -475,7 +561,7 @@ class Custom_Grid extends Grid {
 		$(window).on(`resize${namespace}`, this._recalculate_sticky_layout);
 		$(window).on(`scroll${namespace}`, this._on_page_scroll);
 		document.addEventListener("scroll", this._on_page_scroll, true);
-		this.form_grid_container.on("scroll", this._on_page_scroll);
+		this.get_scroll_container()?.on("scroll", this._on_page_scroll);
 	}
 
 	make() {
@@ -486,17 +572,19 @@ class Custom_Grid extends Grid {
 				<p class="text-muted small grid-description"></p>
 				<div class="grid-custom-buttons"></div>
 				<div class="form-grid-container enhanced-grid-container">
-					<div class="form-grid">
-						<div class="grid-heading-row"></div>
-						<div class="grid-body">
-							<div class="rows"></div>
-							<div class="grid-empty text-center">
-								<img
-									src="/assets/frappe/images/ui-states/grid-empty-state.svg"
-									alt="Grid Empty State"
-									class="grid-empty-illustration"
-								>
-								${__("No Data")}
+					<div class="enhanced-grid-scroll-area">
+						<div class="form-grid">
+							<div class="grid-heading-row"></div>
+							<div class="grid-body">
+								<div class="rows"></div>
+								<div class="grid-empty text-center">
+									<img
+										src="/assets/frappe/images/ui-states/grid-empty-state.svg"
+										alt="Grid Empty State"
+										class="grid-empty-illustration"
+									>
+									${__("No Data")}
+								</div>
 							</div>
 						</div>
 					</div>
@@ -546,24 +634,19 @@ class Custom_Grid extends Grid {
 		this.form_grid = this.wrapper.find(".form-grid");
 
 		this.form_grid_container = this.wrapper.find(".form-grid-container");
+		this.form_grid_scroll_area = this.wrapper.find(".enhanced-grid-scroll-area");
 		this.enhanced_slider = this.wrapper.find(".enhanced-slider");
 		let me = this;
 		this.enhanced_slider.on("input", function (event) {
-			me.form_grid_container.scrollLeft(cint(event.target.value));
+			me.set_horizontal_scroll_left(cint(event.target.value));
 		});
-		this.form_grid_container.on(
+		this.get_scroll_container().on(
 			"scroll",
 			frappe.utils.debounce(function () {
-				me.enhanced_slider.val(me.form_grid_container.scrollLeft());
+				me.close_open_grid_dropdowns();
+				me.enhanced_slider.val(me.get_horizontal_scroll_left());
 			}, 10)
 		);
-		// Allow Link/Select dropdown to escape horizontal overflow clipping.
-		this.wrapper.on("awesomplete-open", () => {
-			me.form_grid_container.addClass("has-open-link-dropdown");
-		});
-		this.wrapper.on("awesomplete-close", () => {
-			me.form_grid_container.removeClass("has-open-link-dropdown");
-		});
 		this.setup_sticky_listeners();
 		this.setup_add_row();
 
@@ -624,7 +707,7 @@ class Custom_Grid extends Grid {
 	refresh() {
 		if (this.frm && this.frm.setting_dependency) return;
 
-		const scroll_left = this.form_grid_container?.scrollLeft() || 0;
+		const scroll_left = this.get_horizontal_scroll_left();
 
 		this.filter_applied = Object.keys(this.filter).length !== 0;
 		this.data = this.get_data(this.filter_applied);
@@ -688,7 +771,7 @@ class Custom_Grid extends Grid {
 		requestAnimationFrame(() => {
 			this.sync_column_widths();
 			this.setup_sticky_columns();
-			this.form_grid_container?.scrollLeft(scroll_left);
+			this.set_horizontal_scroll_left(scroll_left);
 			this.update_page_header_sticky();
 		});
 	}
@@ -830,16 +913,16 @@ class Custom_Grid extends Grid {
 		});
 		const container_width = this.form_grid_container[0].clientWidth;
 		const scroll_width = Math.max(width - container_width, 0);
-		const scroll_left = this.form_grid_container.scrollLeft();
+		const scroll_left = this.get_horizontal_scroll_left();
 
 		this.form_grid.css("min-width", `${width}px`);
 
 		if (scroll_width > 0) {
 			this.enhanced_slider.prop("max", scroll_width);
 			this.enhanced_slider.prop("style", "display:block");
-			this.form_grid_container.scrollLeft(Math.min(scroll_left, scroll_width));
+			this.set_horizontal_scroll_left(Math.min(scroll_left, scroll_width));
 		} else {
-			this.form_grid_container.scrollLeft(0);
+			this.set_horizontal_scroll_left(0);
 			this.enhanced_slider.prop("max", 0);
 			this.enhanced_slider.prop("style", "display:none");
 			this.enhanced_slider.prop("value", 0);

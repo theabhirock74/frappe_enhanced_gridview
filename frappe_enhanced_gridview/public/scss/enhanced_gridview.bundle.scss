@@ -1,20 +1,20 @@
 .form-grid-container.enhanced-grid-container {
     border: 1px solid var(--table-border-color);
     border-radius: var(--border-radius-md);
-    overflow-x: auto !important;
-    // Keep scroll for sticky columns; hide native bar — use .enhanced-slider only.
-    scrollbar-width: none;
-    -ms-overflow-style: none;
+    overflow: visible;
 
-    &::-webkit-scrollbar {
-        display: none;
-        width: 0;
-        height: 0;
-    }
+    // Horizontal scroll only on inner area — keeps slider always visible below.
+    .enhanced-grid-scroll-area {
+        overflow-x: auto;
+        overflow-y: visible;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
 
-    // Link/Select dropdowns are clipped by overflow-x — open overflow while list is open.
-    &.has-open-link-dropdown {
-        overflow: visible !important;
+        &::-webkit-scrollbar {
+            display: none;
+            width: 0;
+            height: 0;
+        }
     }
 
     .form-grid {
@@ -23,33 +23,48 @@
         width: max-content;
         min-width: 100%;
         position: relative;
-        overflow: visible;
     }
 
     .form-grid.relative-important {
         position: relative !important;
     }
 
-    .grid-body,
-    .grid-row,
-    .data-row,
-    .grid-static-col,
-    .col {
-        overflow: visible;
+    // Match standard Frappe row editor: full container width, no sticky/scroll chrome.
+    &.has-open-row-form {
+        .enhanced-grid-scroll-area {
+            overflow: visible;
+        }
+
+        .form-grid {
+            width: 100% !important;
+            min-width: 100% !important;
+            max-width: 100%;
+        }
+
+        .enhanced-slider {
+            display: none !important;
+        }
+
+        .grid-row-open {
+            position: relative;
+            z-index: 1021;
+            width: 100%;
+        }
+
+        .form-in-grid {
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+        }
     }
 
     .grid-row.editable-row {
         position: relative;
-        z-index: 20;
-
-        .awesomplete {
-            position: relative;
-            z-index: 21;
-        }
+        z-index: 6;
 
         .awesomplete > ul,
         .awesomplete > [role="listbox"] {
-            z-index: 1040 !important;
+            z-index: 20;
         }
     }
 
@@ -207,19 +222,19 @@
         }
     }
 
-    .slidecontainer {
-        width: 100%;
-    }
-
     .enhanced-slider {
         -webkit-appearance: none;
+        display: block;
         width: 100%;
         height: 8px;
+        margin: 0;
         background: #d3d3d3;
         outline: none;
         opacity: 0.7;
         -webkit-transition: .2s;
         transition: opacity .2s;
+        position: relative;
+        z-index: 2;
     }
 
     .enhanced-slider:hover {
@@ -248,6 +263,8 @@
     visibility: visible !important;
     opacity: 1 !important;
     background-color: var(--subtle-fg) !important;
+    // Below #freeze.grid-form (1020) and .form-in-grid (1021) so row editor stays on top.
+    z-index: 1010 !important;
 
     .data-row.row > .col {
         background-color: var(--subtle-fg) !important;

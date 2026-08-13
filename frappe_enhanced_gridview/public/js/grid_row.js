@@ -902,6 +902,15 @@ export default class GridRow {
 		function on_input_focus(el) {
 			input_in_focus = true;
 
+			if (!grid_container) {
+				grid_container =
+					el.closest(".enhanced-grid-scroll-area")[0] ||
+					el.closest(".form-grid-container")[0];
+			}
+			if (!grid_container) {
+				return;
+			}
+
 			let container_width = grid_container.getBoundingClientRect().width;
 			let container_left = grid_container.getBoundingClientRect().left;
 			let scroll_left = grid_container.scrollLeft || 0;
@@ -957,7 +966,9 @@ export default class GridRow {
 			.appendTo(this.row)
 			// initialize grid for horizontal scroll on mobile devices.
 			.on("touchstart", function (event) {
-				grid_container = $(event.currentTarget).closest(".form-grid-container")[0];
+				grid_container =
+					$(event.currentTarget).closest(".enhanced-grid-scroll-area")[0] ||
+					$(event.currentTarget).closest(".form-grid-container")[0];
 				grid = $(event.currentTarget).closest(".form-grid")[0];
 
 				start_x = event.touches[0].clientX;
