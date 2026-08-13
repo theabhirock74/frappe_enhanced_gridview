@@ -557,6 +557,13 @@ class Custom_Grid extends Grid {
 				me.enhanced_slider.val(me.form_grid_container.scrollLeft());
 			}, 10)
 		);
+		// Allow Link/Select dropdown to escape horizontal overflow clipping.
+		this.wrapper.on("awesomplete-open", () => {
+			me.form_grid_container.addClass("has-open-link-dropdown");
+		});
+		this.wrapper.on("awesomplete-close", () => {
+			me.form_grid_container.removeClass("has-open-link-dropdown");
+		});
 		this.setup_sticky_listeners();
 		this.setup_add_row();
 

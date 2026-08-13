@@ -12,16 +12,45 @@
         height: 0;
     }
 
+    // Link/Select dropdowns are clipped by overflow-x — open overflow while list is open.
+    &.has-open-link-dropdown {
+        overflow: visible !important;
+    }
+
     .form-grid {
         border: none;
         border-radius: unset;
         width: max-content;
         min-width: 100%;
         position: relative;
+        overflow: visible;
     }
 
     .form-grid.relative-important {
         position: relative !important;
+    }
+
+    .grid-body,
+    .grid-row,
+    .data-row,
+    .grid-static-col,
+    .col {
+        overflow: visible;
+    }
+
+    .grid-row.editable-row {
+        position: relative;
+        z-index: 20;
+
+        .awesomplete {
+            position: relative;
+            z-index: 21;
+        }
+
+        .awesomplete > ul,
+        .awesomplete > [role="listbox"] {
+            z-index: 1040 !important;
+        }
     }
 
     .grid-heading-row {
