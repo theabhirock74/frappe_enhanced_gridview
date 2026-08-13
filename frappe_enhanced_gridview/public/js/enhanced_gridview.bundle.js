@@ -1,20 +1,22 @@
 import GridRow from './grid_row';
 import Grid from './grid';
 
+// Enhanced grid is horizontally scrollable — allow more than 10 column units.
+function allow_scrollable_column_widths() {
+	if (frappe?.ui?.form?.GridRow?.prototype && !frappe.ui.form.GridRow.prototype._enhanced_grid_width_patched) {
+		frappe.ui.form.GridRow.prototype.validate_columns_width = function () {
+			// no-op: column widths may exceed 10 when the grid scrolls horizontally
+		};
+		frappe.ui.form.GridRow.prototype._enhanced_grid_width_patched = true;
+	}
+}
+
+allow_scrollable_column_widths();
+
 class Custom_GridRow extends GridRow {
 
 	validate_columns_width() {
-		let total_column_width = 0.0;
-
-		this.selected_columns_for_grid.forEach((row) => {
-			if (row.columns && row.columns > 0) {
-				total_column_width += cint(row.columns);
-			}
-		});
-
-		// if (total_column_width && total_column_width > 10) {
-		// 	frappe.throw(__("The total column width cannot be more than 10."));
-		// }
+		// Scrollable enhanced grid — do not enforce the default max width of 10.
 	}
 
 	show_form() {
@@ -233,25 +235,31 @@ class Custom_Grid extends Grid {
 			return;
 		}
 
-		$clone.empty().append($heading.children(".grid-row").clone(false, false));
+		// Only the label row — skip filter/search row (empty grey boxes).
+		const $label_row = $heading.children(".grid-row:not(.filter-row)").first();
+		$clone.empty();
+		if ($label_row.length) {
+			$clone.append($label_row.clone(false, false));
+		}
+		$clone.removeClass("with-filter");
 		$clone.find("input, button, select, textarea").prop("disabled", true);
-		$clone.toggleClass("with-filter", $heading.hasClass("with-filter"));
 	}
 
 	sync_sticky_header_clone($heading, $clone, container_rect, scroll_left, sticky_top) {
 		const grid_width = Math.round(this.form_grid.outerWidth()) || container_rect.width;
+		const $label_row = $heading.children(".grid-row:not(.filter-row)").first();
 		const heading_height =
 			this._sticky_heading_height ||
-			Math.round($heading.outerHeight()) ||
+			Math.round($label_row.outerHeight()) ||
 			Math.round($clone.outerHeight()) ||
-			40;
+			32;
 
 		$clone.css({
 			position: "fixed",
 			top: `${sticky_top}px`,
 			left: `${Math.round(container_rect.left)}px`,
 			width: `${Math.round(container_rect.width)}px`,
-			height: "auto",
+			height: `${heading_height}px`,
 			minHeight: `${heading_height}px`,
 			zIndex: 1025,
 			overflow: "hidden",
@@ -269,6 +277,7 @@ class Custom_Grid extends Grid {
 		$clone.children(".grid-row").css({
 			width: `${grid_width}px`,
 			minWidth: `${grid_width}px`,
+			backgroundColor: "var(--subtle-fg)",
 		});
 
 		$clone[0].scrollLeft = scroll_left;
@@ -278,38 +287,40 @@ class Custom_Grid extends Grid {
 			return;
 		}
 
-		$heading.find(".data-row").each(function (row_index) {
-			const $src_row = $(this);
-			const $dst_row = $clone.find(".data-row").eq(row_index);
-			if (!$dst_row.length) {
+		const $src_row = $label_row.find(".data-row").first();
+		const $dst_row = $clone.find(".data-row").first();
+		if (!$src_row.length || !$dst_row.length) {
+			return;
+		}
+
+		$src_row.children(".col").each(function (index) {
+			const $src = $(this);
+			const $dst = $dst_row.children(".col").eq(index);
+			if (!$dst.length) {
 				return;
 			}
-
-			$src_row.children(".col").each(function (index) {
-				const $src = $(this);
-				const $dst = $dst_row.children(".col").eq(index);
-				if (!$dst.length) {
-					return;
-				}
-				$dst.css({
-					position: $src.css("position"),
-					left: $src.css("left"),
-					zIndex: $src.css("z-index"),
-					backgroundColor: $src.css("background-color"),
-					flex: $src.css("flex"),
-					width: $src.css("width"),
-					minWidth: $src.css("min-width"),
-					maxWidth: $src.css("max-width"),
-				});
+			$dst.css({
+				position: $src.css("position"),
+				left: $src.css("left"),
+				zIndex: $src.css("z-index"),
+				backgroundColor: "var(--subtle-fg)",
+				flex: $src.css("flex"),
+				width: $src.css("width"),
+				minWidth: $src.css("min-width"),
+				maxWidth: $src.css("max-width"),
 			});
 		});
 	}
 
 	collapse_heading_for_sticky($heading, $placeholder, heading_height) {
-		// Only placeholder keeps layout space — avoids double gap / floating mid-table header.
+		// Keep full original heading height in layout via placeholder (label + filter).
+		const full_height = Math.round($heading.outerHeight()) || heading_height;
+		this._sticky_heading_height = heading_height;
+		this._sticky_placeholder_height = full_height;
+
 		$placeholder.css({
 			display: "block",
-			height: `${heading_height}px`,
+			height: `${full_height}px`,
 			width: "100%",
 		});
 		$heading.addClass("is-page-sticky").css({
@@ -405,7 +416,8 @@ class Custom_Grid extends Grid {
 		}
 
 		if (!is_stuck) {
-			this._sticky_heading_height = Math.round($heading.outerHeight()) || heading_height;
+			const $label_row = $heading.children(".grid-row:not(.filter-row)").first();
+			this._sticky_heading_height = Math.round($label_row.outerHeight()) || 32;
 			this.ensure_sticky_header_clone($heading);
 			this.refresh_sticky_header_clone_content($heading);
 			// Sync while source heading still has real height/widths, then collapse.
