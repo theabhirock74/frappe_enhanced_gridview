@@ -48,6 +48,10 @@ class Custom_Grid extends Grid {
 		);
 	}
 
+	has_sticky_header() {
+		return cint(this.df?.sticky_header);
+	}
+
 	get_sticky_column_key($col) {
 		if ($col.hasClass("row-check")) {
 			return "__check__";
@@ -188,31 +192,45 @@ class Custom_Grid extends Grid {
 
 	get_page_sticky_top() {
 		const root_styles = getComputedStyle(document.documentElement);
-		let navbar = parseInt(root_styles.getPropertyValue("--navbar-height"), 10);
-		if (Number.isNaN(navbar)) {
-			navbar = 48;
+		let top = parseInt(root_styles.getPropertyValue("--navbar-height"), 10);
+		if (Number.isNaN(top) || top < 0 || top > 120) {
+			top = 48;
 		}
 
-		const $tabs = $(".form-tabs-list").filter(":visible").first();
-		if ($tabs.length) {
-			const tabs_rect = $tabs[0].getBoundingClientRect();
-			// Tabs are sticky near the top — pin header exactly under them.
-			if (tabs_rect.bottom > 0 && tabs_rect.top < navbar + 120) {
-				return Math.round(tabs_rect.bottom);
+		const navbar_el = document.querySelector(".navbar");
+		if (navbar_el) {
+			const nr = navbar_el.getBoundingClientRect();
+			if (nr.bottom > 0 && nr.top < 8) {
+				top = Math.round(nr.bottom);
 			}
 		}
 
-		let top = navbar;
-		const $page_head = $(".page-head").first();
-		if ($page_head.length) {
-			const head_rect = $page_head[0].getBoundingClientRect();
-			if (head_rect.bottom > navbar - 2 && head_rect.top < navbar + 20) {
-				top = Math.round(head_rect.bottom);
+		// Prefer measured stuck chrome. Forms without tabs (e.g. some custom doctypes)
+		// still pin under page-head / navbar only.
+		for (const selector of [".page-head", ".form-tabs-list"]) {
+			const el = document.querySelector(selector);
+			if (!el) {
+				continue;
+			}
+			const style = getComputedStyle(el);
+			if (style.display === "none" || style.visibility === "hidden") {
+				continue;
+			}
+			const pos = style.position;
+			if (pos !== "sticky" && pos !== "fixed") {
+				continue;
+			}
+			const rect = el.getBoundingClientRect();
+			if (rect.height < 1) {
+				continue;
+			}
+			// Stuck at/near current top edge (allow small drift).
+			if (rect.top <= top + 8 && rect.top >= top - 8 && rect.bottom > top + 4) {
+				top = Math.round(rect.bottom);
 			}
 		}
 
-		top += $tabs.length ? Math.round($tabs.outerHeight()) : 52;
-		return top;
+		return Math.min(Math.max(top, 40), 200);
 	}
 
 	ensure_sticky_header_clone($heading) {
@@ -221,11 +239,8 @@ class Custom_Grid extends Grid {
 		}
 
 		this._sticky_header_clone = $("<div>")
-			.addClass("grid-heading-row enhanced-grid-sticky-clone")
+			.addClass("enhanced-grid-sticky-clone")
 			.attr("aria-hidden", "true");
-		if ($heading.hasClass("with-filter")) {
-			this._sticky_header_clone.addClass("with-filter");
-		}
 		$("body").append(this._sticky_header_clone);
 		return this._sticky_header_clone;
 	}
@@ -235,6 +250,7 @@ class Custom_Grid extends Grid {
 			this._sticky_header_clone.remove();
 			this._sticky_header_clone = null;
 		}
+		$("body > .enhanced-grid-sticky-clone").remove();
 	}
 
 	refresh_sticky_header_clone_content($heading) {
@@ -243,13 +259,11 @@ class Custom_Grid extends Grid {
 			return;
 		}
 
-		// Only the label row — skip filter/search row (empty grey boxes).
 		const $label_row = $heading.children(".grid-row:not(.filter-row)").first();
 		$clone.empty();
 		if ($label_row.length) {
 			$clone.append($label_row.clone(false, false));
 		}
-		$clone.removeClass("with-filter");
 		$clone.find("input, button, select, textarea").prop("disabled", true);
 	}
 
@@ -276,8 +290,8 @@ class Custom_Grid extends Grid {
 			opacity: 1,
 			margin: 0,
 			padding: 0,
-			backgroundColor: "var(--subtle-fg)",
-			boxShadow: "0 2px 6px rgba(0, 0, 0, 0.12)",
+			backgroundColor: "var(--subtle-fg, #f3f3f3)",
+			boxShadow: "0 2px 8px rgba(0, 0, 0, 0.12)",
 			borderBottom: "1px solid var(--table-border-color)",
 			pointerEvents: "none",
 		});
@@ -285,13 +299,13 @@ class Custom_Grid extends Grid {
 		$clone.children(".grid-row").css({
 			width: `${grid_width}px`,
 			minWidth: `${grid_width}px`,
-			backgroundColor: "var(--subtle-fg)",
+			backgroundColor: "var(--subtle-fg, #f3f3f3)",
+			margin: 0,
 		});
 
 		$clone[0].scrollLeft = scroll_left;
 
-		// Only copy metrics while source heading is still laid out (not collapsed).
-		if ($heading.hasClass("is-page-sticky")) {
+		if ($heading.css("visibility") === "hidden") {
 			return;
 		}
 
@@ -311,7 +325,9 @@ class Custom_Grid extends Grid {
 				position: $src.css("position"),
 				left: $src.css("left"),
 				zIndex: $src.css("z-index"),
-				backgroundColor: "var(--subtle-fg)",
+				backgroundColor: "var(--subtle-fg, #f3f3f3)",
+				color: "var(--text-muted, #525252)",
+				opacity: 1,
 				flex: $src.css("flex"),
 				width: $src.css("width"),
 				minWidth: $src.css("min-width"),
@@ -320,59 +336,30 @@ class Custom_Grid extends Grid {
 		});
 	}
 
-	collapse_heading_for_sticky($heading, $placeholder, heading_height) {
-		// Keep full original heading height in layout via placeholder (label + filter).
-		const full_height = Math.round($heading.outerHeight()) || heading_height;
-		this._sticky_heading_height = heading_height;
-		this._sticky_placeholder_height = full_height;
-
-		$placeholder.css({
-			display: "block",
-			height: `${full_height}px`,
-			width: "100%",
-		});
-		$heading.addClass("is-page-sticky").css({
-			position: "absolute",
-			left: 0,
-			top: 0,
-			width: "100%",
-			height: 0,
-			margin: 0,
-			padding: 0,
-			overflow: "hidden",
-			opacity: 0,
-			pointerEvents: "none",
-			visibility: "hidden",
-		});
-	}
-
-	restore_heading_after_sticky($heading, $placeholder) {
-		if ($heading?.length) {
-			$heading.removeClass("is-page-sticky").css({
-				position: "",
-				left: "",
-				top: "",
-				width: "",
-				height: "",
-				margin: "",
-				padding: "",
-				overflow: "",
-				opacity: "",
-				pointerEvents: "",
-				visibility: "",
-			});
-		}
-		if ($placeholder?.length) {
-			$placeholder.css({ display: "none", height: "", width: "" });
-		}
-	}
-
 	clear_page_header_sticky($heading, $placeholder) {
 		try {
 			this.remove_sticky_header_clone();
-			this.restore_heading_after_sticky($heading, $placeholder);
+			const $h =
+				$heading?.length
+					? $heading
+					: this.wrapper?.find(".form-grid > .grid-heading-row").first();
+			if ($h?.length) {
+				$h.css({
+					visibility: "",
+					opacity: "",
+					pointerEvents: "",
+				});
+				$h.removeClass("is-page-sticky");
+			}
+			if ($placeholder?.length) {
+				$placeholder.css({ display: "none", height: "", width: "" });
+			}
+			this.wrapper?.find(".enhanced-grid-heading-placeholder").css({
+				display: "none",
+				height: "",
+				width: "",
+			});
 		} catch (e) {
-			// Never break form rendering because of sticky cleanup.
 			console.warn("enhanced_gridview sticky cleanup failed", e);
 		}
 	}
@@ -386,56 +373,43 @@ class Custom_Grid extends Grid {
 	}
 
 	_update_page_header_sticky() {
-		if (this._row_form_open) {
-			const $heading = this.wrapper?.find(".form-grid > .grid-heading-row").first();
-			const $placeholder = this.wrapper?.find(".enhanced-grid-heading-placeholder");
-			this.clear_page_header_sticky($heading, $placeholder);
+		if (this._row_form_open || !this.has_sticky_header()) {
+			this.clear_page_header_sticky();
 			return;
 		}
 
 		const $heading = this.wrapper?.find(".form-grid > .grid-heading-row").first();
-		const $container = this.form_grid_container;
+		const $scroll = this.get_scroll_container();
 		const $grid_field = this.wrapper;
-		if (!$heading?.length || !$container?.length || !$grid_field?.length) {
+		if (!$heading?.length || !$scroll?.length || !$grid_field?.length) {
 			return;
 		}
 
 		const sticky_top = this.get_page_sticky_top();
-		const container_rect = $container[0].getBoundingClientRect();
+		const container_rect = $scroll[0].getBoundingClientRect();
 		const field_rect = $grid_field[0].getBoundingClientRect();
 		const heading_height =
-			this._sticky_heading_height || Math.round($heading.outerHeight()) || 0;
+			this._sticky_heading_height || Math.round($heading.outerHeight()) || 32;
 		const scroll_left = this.get_horizontal_scroll_left();
+		const heading_rect = $heading[0].getBoundingClientRect();
 
-		let $placeholder = this.wrapper.find(".enhanced-grid-heading-placeholder");
-		if (!$placeholder.length) {
-			$placeholder = $(
-				'<div class="enhanced-grid-heading-placeholder" aria-hidden="true"></div>'
-			);
-			$heading.after($placeholder);
-		}
-
-		const is_stuck = Boolean(this._sticky_header_clone?.length);
-		const anchor_top = is_stuck
-			? $placeholder[0].getBoundingClientRect().top
-			: $heading[0].getBoundingClientRect().top;
-
-		// Keep pinned under tabs until the whole child-table block scrolls away.
+		// Stick only after the real header reaches the page chrome.
 		const should_stick =
-			anchor_top <= sticky_top && field_rect.bottom > sticky_top + heading_height + 4;
+			heading_rect.top <= sticky_top + 1 &&
+			field_rect.bottom > sticky_top + heading_height + 8 &&
+			container_rect.width > 40;
 
 		if (!should_stick) {
-			this.clear_page_header_sticky($heading, $placeholder);
+			this.clear_page_header_sticky($heading);
 			this._sticky_heading_height = null;
 			return;
 		}
 
-		if (!is_stuck) {
+		if (!this._sticky_header_clone?.length) {
 			const $label_row = $heading.children(".grid-row:not(.filter-row)").first();
 			this._sticky_heading_height = Math.round($label_row.outerHeight()) || 32;
 			this.ensure_sticky_header_clone($heading);
 			this.refresh_sticky_header_clone_content($heading);
-			// Sync while source heading still has real height/widths, then collapse.
 			this.sync_sticky_header_clone(
 				$heading,
 				this._sticky_header_clone,
@@ -443,11 +417,11 @@ class Custom_Grid extends Grid {
 				scroll_left,
 				sticky_top
 			);
-			this.collapse_heading_for_sticky(
-				$heading,
-				$placeholder,
-				this._sticky_heading_height
-			);
+			// Keep layout space; hide only the in-flow header.
+			$heading.css({
+				visibility: "hidden",
+				pointerEvents: "none",
+			});
 			return;
 		}
 
@@ -909,6 +883,7 @@ class Custom_Grid extends Grid {
 		this.get_scroll_container().on("scroll", function () {
 			me.close_open_grid_dropdowns();
 			me.sync_enhanced_slider_value();
+			me.update_page_header_sticky();
 		});
 		// Native awesomplete events — document capture is more reliable than jQuery bubble.
 		this._on_awesomplete_open = (e) => {

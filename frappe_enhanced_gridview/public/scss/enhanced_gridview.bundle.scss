@@ -377,30 +377,37 @@ ul.enhanced-grid-link-dropdown-pinned,
 }
 
 // Sticky clone is appended to body (outside form card overflow:hidden).
-.grid-heading-row.enhanced-grid-sticky-clone {
+// Fixed sticky header clone pinned under navbar / page-head / tabs.
+.enhanced-grid-sticky-clone {
+    position: fixed !important;
+    z-index: 1010 !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
     visibility: visible !important;
     opacity: 1 !important;
-    background-color: var(--subtle-fg) !important;
-    // Below #freeze.grid-form (1020) and .form-in-grid (1021) so row editor stays on top.
-    z-index: 1010 !important;
-
-    .data-row.row > .col {
-        background-color: var(--subtle-fg) !important;
-        height: 32px;
-        display: flex;
-        align-items: center;
-    }
-
-    &.with-filter .filter-row .data-row.row > .col {
-        background-color: var(--bg-color) !important;
-    }
+    background-color: var(--subtle-fg, #f3f3f3) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    border-bottom: 1px solid var(--table-border-color);
 
     .data-row.row {
         flex-wrap: nowrap;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
 
-        .col {
+        > .col {
             flex-shrink: 0;
+            background-color: var(--subtle-fg, #f3f3f3) !important;
+            color: var(--text-muted, #525252) !important;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            opacity: 1 !important;
         }
+    }
+
+    .grid-static-col .static-area {
+        color: var(--text-muted, #525252) !important;
+        opacity: 1 !important;
     }
 
     scrollbar-width: none;

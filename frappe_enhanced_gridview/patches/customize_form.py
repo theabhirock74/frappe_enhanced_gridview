@@ -1,13 +1,15 @@
 import frappe
 import frappe.custom.doctype.customize_form.customize_form as customize_form_module
 
-PROPERTY_SETTER_ONLY_FIELDS = frozenset({"sticky_in_grid"})
+PROPERTY_SETTER_ONLY_FIELDS = frozenset({"sticky_in_grid", "sticky_header"})
 
 
 def _patch_customize_form():
-	"""Register sticky_in_grid for Customize Form and avoid querying tabDocField."""
+	"""Register sticky grid props for Customize Form and avoid querying tabDocField."""
 	if "sticky_in_grid" not in customize_form_module.docfield_properties:
 		customize_form_module.docfield_properties["sticky_in_grid"] = "Check"
+	if "sticky_header" not in customize_form_module.docfield_properties:
+		customize_form_module.docfield_properties["sticky_header"] = "Check"
 
 	if getattr(customize_form_module.CustomizeForm, "_sticky_grid_patched", False):
 		return
@@ -17,7 +19,7 @@ def _patch_customize_form():
 	)
 
 	def get_existing_property_value(self, property_name, fieldname=None):
-		# sticky_in_grid is not a DocField DB column — read/compare via Property Setter.
+		# These are not DocField DB columns — read/compare via Property Setter.
 		if (
 			fieldname
 			and property_name in PROPERTY_SETTER_ONLY_FIELDS

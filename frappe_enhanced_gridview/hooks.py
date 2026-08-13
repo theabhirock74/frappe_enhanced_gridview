@@ -11,7 +11,16 @@ app_license = "mit"
 fixtures = [
 	{
 		"dt": "Custom Field",
-		"filters": [["name", "in", ["Customize Form Field-sticky_in_grid"]]],
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Customize Form Field-sticky_in_grid",
+					"Customize Form Field-sticky_header",
+				],
+			]
+		],
 	}
 ]
 
