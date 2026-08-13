@@ -13,6 +13,11 @@ function allow_scrollable_column_widths() {
 
 allow_scrollable_column_widths();
 
+const STICKY_HEADER_UX = {
+	STICK_IN_PX: 2,
+	STICK_OUT_PX: 48,
+};
+
 class Custom_GridRow extends GridRow {
 
 	validate_columns_width() {
@@ -190,47 +195,219 @@ class Custom_Grid extends Grid {
 		});
 	}
 
-	get_page_sticky_top() {
+	get_form_chrome_root() {
+		return (
+			this.wrapper?.closest(".form-page, .form-layout, .layout-main-section")[0] ||
+			document
+		);
+	}
+
+	measure_page_sticky_top() {
 		const root_styles = getComputedStyle(document.documentElement);
-		let top = parseInt(root_styles.getPropertyValue("--navbar-height"), 10);
-		if (Number.isNaN(top) || top < 0 || top > 120) {
-			top = 48;
+		const page_head_height =
+			parseInt(root_styles.getPropertyValue("--page-head-height"), 10) || 60;
+		let navbar_bottom = parseInt(root_styles.getPropertyValue("--navbar-height"), 10);
+		if (Number.isNaN(navbar_bottom) || navbar_bottom < 0 || navbar_bottom > 120) {
+			navbar_bottom = 48;
 		}
 
-		const navbar_el = document.querySelector(".navbar");
+		const chrome_root = this.get_form_chrome_root();
+		const navbar_el =
+			chrome_root.querySelector?.(".navbar") || document.querySelector(".navbar");
 		if (navbar_el) {
 			const nr = navbar_el.getBoundingClientRect();
-			if (nr.bottom > 0 && nr.top < 8) {
-				top = Math.round(nr.bottom);
+			if (nr.bottom > 0) {
+				navbar_bottom = Math.round(nr.bottom);
 			}
 		}
 
-		// Prefer measured stuck chrome. Forms without tabs (e.g. some custom doctypes)
-		// still pin under page-head / navbar only.
-		for (const selector of [".page-head", ".form-tabs-list"]) {
-			const el = document.querySelector(selector);
-			if (!el) {
-				continue;
+		let top = navbar_bottom;
+		const page_head =
+			chrome_root.querySelector?.(".page-head") || document.querySelector(".page-head");
+		const tabs =
+			chrome_root.querySelector?.(".form-tabs-list") ||
+			document.querySelector(".form-tabs-list");
+
+		// Tabs animate between sticky-up / sticky-down (0.5s). Follow their live bottom
+		// so the child-table header moves with the main form tabs during fast scroll.
+		if (tabs && getComputedStyle(tabs).display !== "none" && tabs.offsetHeight > 0) {
+			const tabs_rect = tabs.getBoundingClientRect();
+			const sticky_up_bottom = navbar_bottom + tabs.offsetHeight;
+			const sticky_down_bottom = navbar_bottom + page_head_height + tabs.offsetHeight;
+
+			if (tabs_rect.top <= navbar_bottom + page_head_height + 16) {
+				const live_bottom = Math.round(tabs_rect.bottom);
+				const top = Math.max(live_bottom, sticky_up_bottom);
+				return Math.min(Math.max(top, 40), 240);
 			}
-			const style = getComputedStyle(el);
-			if (style.display === "none" || style.visibility === "hidden") {
-				continue;
-			}
-			const pos = style.position;
-			if (pos !== "sticky" && pos !== "fixed") {
-				continue;
-			}
-			const rect = el.getBoundingClientRect();
-			if (rect.height < 1) {
-				continue;
-			}
-			// Stuck at/near current top edge (allow small drift).
-			if (rect.top <= top + 8 && rect.top >= top - 8 && rect.bottom > top + 4) {
-				top = Math.round(rect.bottom);
+
+			return Math.min(Math.max(Math.round(sticky_down_bottom), 40), 240);
+		}
+
+		if (page_head && getComputedStyle(page_head).display !== "none" && page_head.offsetHeight > 0) {
+			const page_rect = page_head.getBoundingClientRect();
+			if (page_rect.top <= navbar_bottom + 12 && page_rect.bottom > navbar_bottom) {
+				top = Math.round(page_rect.bottom);
+			} else {
+				top = navbar_bottom + page_head_height;
 			}
 		}
 
-		return Math.min(Math.max(top, 40), 200);
+		return Math.min(Math.max(top, 40), 240);
+	}
+
+	get_page_sticky_top() {
+		// Threshold for stick/unstick hysteresis — stable while stuck.
+		if (this._stick_threshold_top != null) {
+			return this._stick_threshold_top;
+		}
+		if (this._cached_sticky_top != null) {
+			return this._cached_sticky_top;
+		}
+
+		const measured = this.measure_page_sticky_top();
+		this._cached_sticky_top = measured;
+		return measured;
+	}
+
+	get_live_sticky_top() {
+		return this.measure_page_sticky_top();
+	}
+
+	invalidate_sticky_top_cache() {
+		this._cached_sticky_top = null;
+		this._stick_threshold_top = null;
+	}
+
+	cancel_scheduled_sticky_unstick() {
+		if (this._sticky_unstick_timer) {
+			clearTimeout(this._sticky_unstick_timer);
+			this._sticky_unstick_timer = null;
+		}
+	}
+
+	start_sticky_follow_loop() {
+		if (this._sticky_follow_raf) {
+			return;
+		}
+
+		const me = this;
+		const tick = () => {
+			if (!me._sticky_header_active || !me.has_sticky_header()) {
+				me._sticky_follow_raf = null;
+				return;
+			}
+
+			me._sync_sticky_header_position();
+			me._sticky_follow_raf = requestAnimationFrame(tick);
+		};
+
+		this._sticky_follow_raf = requestAnimationFrame(tick);
+	}
+
+	stop_sticky_follow_loop() {
+		if (this._sticky_follow_raf) {
+			cancelAnimationFrame(this._sticky_follow_raf);
+			this._sticky_follow_raf = null;
+		}
+	}
+
+	_sync_sticky_header_position() {
+		if (!this._sticky_header_active || !this._sticky_header_clone?.length) {
+			return;
+		}
+
+		const $heading = this.wrapper?.find(".form-grid > .grid-heading-row").first();
+		const anchor_rect = this.get_sticky_header_anchor_rect();
+		const scroll_rect =
+			this.get_scroll_container()?.[0]?.getBoundingClientRect() || anchor_rect;
+		if (!$heading?.length || !anchor_rect || !scroll_rect) {
+			return;
+		}
+
+		const heading_height = this._sticky_heading_height || Math.round($heading.outerHeight()) || 32;
+		const sticky_top = this.get_page_sticky_top();
+		const should_stick = this.should_stick_grid_header(
+			anchor_rect,
+			sticky_top,
+			heading_height
+		);
+
+		if (!should_stick) {
+			this.clear_page_header_sticky($heading);
+			return;
+		}
+
+		this.sync_sticky_header_clone(
+			$heading,
+			this._sticky_header_clone,
+			scroll_rect,
+			this.get_horizontal_scroll_left(),
+			this.get_live_sticky_top()
+		);
+	}
+
+	setup_tabs_sticky_observer() {
+		if (this._tabs_sticky_observer) {
+			return;
+		}
+
+		const chrome_root = this.get_form_chrome_root();
+		const tabs =
+			chrome_root?.querySelector?.(".form-tabs-list") ||
+			document.querySelector(".form-tabs-list");
+		const page_head =
+			chrome_root?.querySelector?.(".page-head") ||
+			document.querySelector(".page-head");
+		if (!tabs && !page_head) {
+			return;
+		}
+
+		const me = this;
+		this._tabs_sticky_observer = new MutationObserver(() => {
+			if (me._sticky_header_active) {
+				me._sync_sticky_header_position();
+			}
+		});
+
+		for (const el of [tabs, page_head]) {
+			if (el) {
+				this._tabs_sticky_observer.observe(el, {
+					attributes: true,
+					attributeFilter: ["class", "style"],
+				});
+			}
+		}
+	}
+
+	teardown_tabs_sticky_observer() {
+		this._tabs_sticky_observer?.disconnect();
+		this._tabs_sticky_observer = null;
+	}
+
+	get_sticky_header_anchor_rect() {
+		return (
+			this.form_grid_container?.[0]?.getBoundingClientRect() ||
+			this.get_scroll_container()?.[0]?.getBoundingClientRect() ||
+			null
+		);
+	}
+
+	should_stick_grid_header(anchor_rect, sticky_top, heading_height) {
+		if (!anchor_rect || anchor_rect.width <= 40) {
+			return false;
+		}
+
+		const stick_threshold = this._sticky_header_active
+			? sticky_top + STICKY_HEADER_UX.STICK_OUT_PX
+			: sticky_top + STICKY_HEADER_UX.STICK_IN_PX;
+
+		// Anchor to the child-table scroll area — not the heading row — so stick state
+		// does not oscillate when the parent grid shifts during fast scroll.
+		return (
+			anchor_rect.top <= stick_threshold &&
+			anchor_rect.bottom > sticky_top + heading_height + 8
+		);
 	}
 
 	ensure_sticky_header_clone($heading) {
@@ -305,10 +482,6 @@ class Custom_Grid extends Grid {
 
 		$clone[0].scrollLeft = scroll_left;
 
-		if ($heading.css("visibility") === "hidden") {
-			return;
-		}
-
 		const $src_row = $label_row.find(".data-row").first();
 		const $dst_row = $clone.find(".data-row").first();
 		if (!$src_row.length || !$dst_row.length) {
@@ -338,6 +511,11 @@ class Custom_Grid extends Grid {
 
 	clear_page_header_sticky($heading, $placeholder) {
 		try {
+			this.cancel_scheduled_sticky_unstick();
+			this.stop_sticky_follow_loop();
+			this._sticky_header_active = false;
+			this._stick_threshold_top = null;
+			this.form_grid_container?.removeClass("has-sticky-header-active");
 			this.remove_sticky_header_clone();
 			const $h =
 				$heading?.length
@@ -348,6 +526,8 @@ class Custom_Grid extends Grid {
 					visibility: "",
 					opacity: "",
 					pointerEvents: "",
+					minHeight: "",
+					height: "",
 				});
 				$h.removeClass("is-page-sticky");
 			}
@@ -357,6 +537,7 @@ class Custom_Grid extends Grid {
 			this.wrapper?.find(".enhanced-grid-heading-placeholder").css({
 				display: "none",
 				height: "",
+				minHeight: "",
 				width: "",
 			});
 		} catch (e) {
@@ -380,58 +561,69 @@ class Custom_Grid extends Grid {
 
 		const $heading = this.wrapper?.find(".form-grid > .grid-heading-row").first();
 		const $scroll = this.get_scroll_container();
-		const $grid_field = this.wrapper;
-		if (!$heading?.length || !$scroll?.length || !$grid_field?.length) {
+		if (!$heading?.length || !$scroll?.length) {
 			return;
 		}
 
-		const sticky_top = this.get_page_sticky_top();
-		const container_rect = $scroll[0].getBoundingClientRect();
-		const field_rect = $grid_field[0].getBoundingClientRect();
+		const anchor_rect = this.get_sticky_header_anchor_rect();
+		if (!anchor_rect) {
+			return;
+		}
+
+		const scroll_rect =
+			this.get_scroll_container()?.[0]?.getBoundingClientRect() || anchor_rect;
 		const heading_height =
 			this._sticky_heading_height || Math.round($heading.outerHeight()) || 32;
 		const scroll_left = this.get_horizontal_scroll_left();
-		const heading_rect = $heading[0].getBoundingClientRect();
 
-		// Stick only after the real header reaches the page chrome.
-		const should_stick =
-			heading_rect.top <= sticky_top + 1 &&
-			field_rect.bottom > sticky_top + heading_height + 8 &&
-			container_rect.width > 40;
+		if (!this._sticky_header_active && this._cached_sticky_top == null) {
+			this._cached_sticky_top = this.measure_page_sticky_top();
+		}
+
+		const sticky_top = this.get_page_sticky_top();
+		const should_stick = this.should_stick_grid_header(
+			anchor_rect,
+			sticky_top,
+			heading_height
+		);
 
 		if (!should_stick) {
 			this.clear_page_header_sticky($heading);
-			this._sticky_heading_height = null;
 			return;
 		}
 
-		if (!this._sticky_header_clone?.length) {
+		if (!this._sticky_header_active) {
+			this._sticky_header_active = true;
+			this._stick_threshold_top = this.measure_page_sticky_top();
 			const $label_row = $heading.children(".grid-row:not(.filter-row)").first();
 			this._sticky_heading_height = Math.round($label_row.outerHeight()) || 32;
+		}
+
+		const locked_height = this._sticky_heading_height || heading_height;
+		const live_top = this.get_live_sticky_top();
+
+		this.form_grid_container?.addClass("has-sticky-header-active");
+
+		if (!this._sticky_header_clone?.length) {
 			this.ensure_sticky_header_clone($heading);
 			this.refresh_sticky_header_clone_content($heading);
-			this.sync_sticky_header_clone(
-				$heading,
-				this._sticky_header_clone,
-				container_rect,
-				scroll_left,
-				sticky_top
-			);
-			// Keep layout space; hide only the in-flow header.
-			$heading.css({
-				visibility: "hidden",
-				pointerEvents: "none",
-			});
-			return;
 		}
+
+		// Keep the child-table layout height fixed while the fixed clone is shown.
+		$heading.css({
+			visibility: "hidden",
+			pointerEvents: "none",
+			minHeight: `${locked_height}px`,
+		});
 
 		this.sync_sticky_header_clone(
 			$heading,
 			this._sticky_header_clone,
-			container_rect,
+			scroll_rect,
 			scroll_left,
-			sticky_top
+			live_top
 		);
+		this.start_sticky_follow_loop();
 	}
 
 	get_scroll_container() {
@@ -769,6 +961,7 @@ class Custom_Grid extends Grid {
 
 		this._recalculate_sticky_layout = frappe.utils.debounce(() => {
 			const scroll_left = me.get_horizontal_scroll_left();
+			me.invalidate_sticky_top_cache();
 			me.sync_column_widths();
 			me.setup_sticky_columns();
 			me.sync_enhanced_slider();
@@ -799,6 +992,7 @@ class Custom_Grid extends Grid {
 		$(window).on(`scroll${namespace}`, this._on_page_scroll);
 		document.addEventListener("scroll", this._on_page_scroll, true);
 		this.get_scroll_container()?.on("scroll", this._on_page_scroll);
+		this.setup_tabs_sticky_observer();
 	}
 
 	make() {

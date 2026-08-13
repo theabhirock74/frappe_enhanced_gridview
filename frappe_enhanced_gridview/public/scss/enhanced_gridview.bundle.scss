@@ -2,6 +2,17 @@
     border: 1px solid var(--table-border-color);
     border-radius: var(--border-radius-md);
     overflow: visible;
+    overflow-anchor: none;
+
+    &.has-sticky-header-active {
+        overflow-anchor: none;
+
+        .enhanced-grid-scroll-area,
+        .form-grid,
+        .grid-heading-row {
+            overflow-anchor: none;
+        }
+    }
 
     // Horizontal scroll only on inner area — keeps slider always visible below.
     .enhanced-grid-scroll-area {
