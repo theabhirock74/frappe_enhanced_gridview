@@ -22,12 +22,18 @@ class Custom_GridRow extends GridRow {
 	show_form() {
 		super.show_form();
 
+		if (this.grid_form?.wrapper?.length) {
+			this.grid_form.wrapper.css("display", "block");
+		}
 		$(this.grid.form_grid).removeClass("relative-important");
 		this.grid.enter_row_form_mode?.(this);
 	}
 	hide_form() {
 		super.hide_form();
 
+		if (this.grid_form?.wrapper?.length) {
+			this.grid_form.wrapper.css("display", "none");
+		}
 		$(this.grid.form_grid).addClass("relative-important");
 		this.grid.leave_row_form_mode?.(this);
 	}
@@ -475,34 +481,113 @@ class Custom_Grid extends Grid {
 		const $placeholder = this.wrapper?.find(".enhanced-grid-heading-placeholder");
 		this.clear_page_header_sticky($heading, $placeholder);
 		this._sticky_heading_height = null;
+		this.unpin_grid_link_dropdown();
 
 		this._saved_form_grid_min_width = this.form_grid?.css("min-width") || "";
 		this._saved_scroll_left = this.get_horizontal_scroll_left();
 		this.set_horizontal_scroll_left(0);
+
+		const container_width = this.form_grid_container?.[0]?.clientWidth || null;
 		this.form_grid?.css({
-			"min-width": "100%",
-			width: "100%",
+			"min-width": container_width ? `${container_width}px` : "100%",
+			"max-width": container_width ? `${container_width}px` : "100%",
+			width: container_width ? `${container_width}px` : "100%",
 		});
 		this.form_grid_container?.addClass("has-open-row-form");
-		this.enhanced_slider?.prop("style", "display:none");
+		this.enhanced_scrollbar?.css("display", "none");
+		this.enhanced_slider?.css("display", "none");
+
+		// Match standard Frappe: only the open row form is visible in the grid box.
+		$heading?.hide();
+		$placeholder?.hide();
+		this.form_grid?.find(".grid-body .grid-row").not(".grid-row-open").hide();
+		this.form_grid?.find(".grid-empty").hide();
 	}
 
 	leave_row_form_mode() {
 		this._row_form_open = false;
+		this.unpin_grid_link_dropdown();
 		this.form_grid_container?.removeClass("has-open-row-form");
+
+		this.form_grid?.find(".grid-heading-row").show();
+		this.form_grid?.find(".grid-body .grid-row").show();
+		this.form_grid
+			?.find(".grid-empty")
+			.css("display", "")
+			.toggleClass("hidden", Boolean(this.data?.length));
 
 		if (this._saved_form_grid_min_width) {
 			this.form_grid?.css("min-width", this._saved_form_grid_min_width);
 		}
-		this.form_grid?.css("width", "max-content");
+		this.form_grid?.css({
+			width: "max-content",
+			"max-width": "",
+		});
 		this._saved_form_grid_min_width = null;
 
 		requestAnimationFrame(() => {
 			this.setup_scrollable_width();
 			this.set_horizontal_scroll_left(this._saved_scroll_left || 0);
 			this._saved_scroll_left = null;
+			this.sync_enhanced_slider();
 			this.update_page_header_sticky();
 		});
+	}
+
+	get_awesomplete_dropdown(input_el) {
+		if (!input_el) {
+			return null;
+		}
+		const list_id = input_el.getAttribute("aria-owns");
+		if (list_id) {
+			const by_id = document.getElementById(list_id);
+			if (by_id) {
+				return by_id;
+			}
+		}
+		return (
+			$(input_el).closest(".awesomplete").children("ul, [role='listbox']")[0] ||
+			$(input_el).siblings("ul, [role='listbox']")[0] ||
+			null
+		);
+	}
+
+	get_awesomplete_for_input(input_el) {
+		if (!input_el) {
+			return null;
+		}
+
+		const $control = $(input_el).closest(".frappe-control");
+		const fieldname =
+			$control.attr("data-fieldname") ||
+			$(input_el).closest("[data-fieldname]").attr("data-fieldname");
+		const grid_row = $(input_el).closest(".grid-row").data("grid_row");
+
+		if (grid_row && fieldname) {
+			const field =
+				grid_row.on_grid_fields_dict?.[fieldname] ||
+				grid_row.grid_form?.fields_dict?.[fieldname];
+			if (field?.awesomplete) {
+				return field.awesomplete;
+			}
+		}
+
+		// Fallback: scan open grid rows / form controls that own this input.
+		if (grid_row) {
+			const dicts = [
+				grid_row.on_grid_fields_dict || {},
+				grid_row.grid_form?.fields_dict || {},
+			];
+			for (const dict of dicts) {
+				for (const field of Object.values(dict)) {
+					if (field?.awesomplete?.input === input_el) {
+						return field.awesomplete;
+					}
+				}
+			}
+		}
+
+		return null;
 	}
 
 	close_open_grid_dropdowns() {
@@ -510,16 +595,193 @@ class Custom_Grid extends Grid {
 		if (this._row_form_open) {
 			return;
 		}
+		if (this._pin_pointer_down) {
+			return;
+		}
+		this.unpin_grid_link_dropdown();
 		this.wrapper
 			?.find(".awesomplete > ul:not([hidden]), .awesomplete > [role='listbox']:not([hidden])")
 			.each(function () {
 				const input = $(this).siblings("input")[0] || $(this).parent().find("input")[0];
 				if (input) {
 					$(input).trigger("blur");
-					input.dispatchEvent(new Event("awesomplete-close", { bubbles: true }));
 				}
 			});
+		$("body > ul.enhanced-grid-link-dropdown-pinned:not([hidden])").each(function () {
+			const input = document.querySelector(`[aria-owns="${this.id}"]`);
+			if (input) {
+				$(input).trigger("blur");
+			}
+		});
 		this.wrapper?.find("input:focus").trigger("blur");
+	}
+
+	bind_pinned_dropdown_selection($dropdown, input_el) {
+		const me = this;
+		$dropdown.off(".enhanced-grid-pin");
+
+		// Keep input focused so Awesomplete does not close before click selects.
+		$dropdown.on("mousedown.enhanced-grid-pin pointerdown.enhanced-grid-pin", (e) => {
+			me._pin_pointer_down = true;
+			e.preventDefault();
+			e.stopPropagation();
+		});
+
+		$dropdown.on("mouseup.enhanced-grid-pin pointerup.enhanced-grid-pin", () => {
+			setTimeout(() => {
+				me._pin_pointer_down = false;
+			}, 0);
+		});
+
+		// Frappe renders options as div[role=option], not li — handle selection ourselves.
+		$dropdown.on("click.enhanced-grid-pin", "[role='option'], li", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+
+			const option = e.currentTarget;
+			const awesomplete = me.get_awesomplete_for_input(input_el);
+			if (!awesomplete) {
+				me._pin_pointer_down = false;
+				return;
+			}
+
+			awesomplete.select(option, option, e.originalEvent || e);
+			me._pin_pointer_down = false;
+		});
+
+		// Restore keyboard-style highlight on mouse hover.
+		$dropdown.on("mouseover.enhanced-grid-pin", "[role='option'], li", function () {
+			const awesomplete = me.get_awesomplete_for_input(input_el);
+			if (!awesomplete) {
+				return;
+			}
+			const index = Array.prototype.indexOf.call(awesomplete.ul.children, this);
+			if (index > -1) {
+				awesomplete.goto(index);
+			}
+		});
+	}
+
+	pin_grid_link_dropdown($input) {
+		const input_el = $input?.[0];
+		const dropdown = this.get_awesomplete_dropdown(input_el);
+		if (!dropdown) {
+			return;
+		}
+
+		const $dropdown = $(dropdown);
+		if ($dropdown.data("enhanced-grid-pinned")) {
+			this.bind_pinned_dropdown_selection($dropdown, input_el);
+			this.reposition_pinned_link_dropdown($input);
+			return;
+		}
+
+		const $awesomplete = $dropdown.parent(".awesomplete").length
+			? $dropdown.parent(".awesomplete")
+			: $(input_el).closest(".awesomplete");
+		$dropdown.data("enhanced-grid-pin-parent", $awesomplete[0] || dropdown.parentNode);
+		document.body.appendChild(dropdown);
+
+		$dropdown.addClass("enhanced-grid-link-dropdown-pinned").data("enhanced-grid-pinned", true);
+		this._pinned_link_dropdown = { $input, $dropdown, input_el };
+		this.form_grid_container?.addClass("has-open-link-dropdown");
+		this.bind_pinned_dropdown_selection($dropdown, input_el);
+		this.reposition_pinned_link_dropdown($input);
+	}
+
+	reposition_pinned_link_dropdown($input) {
+		const input_el = ($input || this._pinned_link_dropdown?.$input)?.[0];
+		const dropdown =
+			this._pinned_link_dropdown?.$dropdown?.[0] || this.get_awesomplete_dropdown(input_el);
+		if (!input_el || !dropdown) {
+			return;
+		}
+
+		const $dropdown = $(dropdown);
+		const input_rect = input_el.getBoundingClientRect();
+		const min_width = Math.max(250, Math.round(input_rect.width));
+		const width = Math.max(input_rect.width, min_width);
+		let left = input_rect.left;
+		let top = input_rect.bottom + 2;
+
+		if (left + width > window.innerWidth - 8) {
+			left = Math.max(8, input_rect.right - width);
+			$dropdown.addClass("awesomplete-align-right");
+		} else {
+			$dropdown.removeClass("awesomplete-align-right");
+		}
+
+		const max_height = Math.min(300, window.innerHeight - top - 12);
+		if (max_height < 120 && input_rect.top > 160) {
+			top = Math.max(8, input_rect.top - Math.min(300, input_rect.top - 8));
+		}
+
+		// Above #freeze.grid-form (1020) and .form-in-grid (1021).
+		$dropdown.css({
+			position: "fixed",
+			top: `${top}px`,
+			left: `${left}px`,
+			right: "auto",
+			width: `${width}px`,
+			minWidth: `${min_width}px`,
+			maxHeight: `${Math.max(120, max_height)}px`,
+			overflowY: "auto",
+			zIndex: 1060,
+			margin: 0,
+			display: "block",
+		});
+		$dropdown.removeAttr("hidden");
+	}
+
+	unpin_grid_link_dropdown($input) {
+		if (this._pin_pointer_down) {
+			return;
+		}
+
+		const input_el = ($input || this._pinned_link_dropdown?.$input)?.[0];
+		const dropdown =
+			this._pinned_link_dropdown?.$dropdown?.[0] || this.get_awesomplete_dropdown(input_el);
+
+		if (!dropdown) {
+			this._pinned_link_dropdown = null;
+			this.form_grid_container?.removeClass("has-open-link-dropdown");
+			return;
+		}
+
+		const $dropdown = $(dropdown);
+		if (!$dropdown.data("enhanced-grid-pinned")) {
+			this._pinned_link_dropdown = null;
+			this.form_grid_container?.removeClass("has-open-link-dropdown");
+			return;
+		}
+
+		$dropdown.off(".enhanced-grid-pin");
+
+		const parent = $dropdown.data("enhanced-grid-pin-parent");
+		if (parent) {
+			$(parent).append($dropdown);
+		}
+
+		$dropdown
+			.removeClass("enhanced-grid-link-dropdown-pinned awesomplete-align-right")
+			.css({
+				position: "",
+				top: "",
+				left: "",
+				right: "",
+				width: "",
+				minWidth: "",
+				maxHeight: "",
+				overflowY: "",
+				zIndex: "",
+				margin: "",
+				display: "",
+			})
+			.removeData("enhanced-grid-pinned")
+			.removeData("enhanced-grid-pin-parent");
+
+		this._pinned_link_dropdown = null;
+		this.form_grid_container?.removeClass("has-open-link-dropdown");
 	}
 
 	setup_sticky_listeners() {
@@ -535,6 +797,7 @@ class Custom_Grid extends Grid {
 			const scroll_left = me.get_horizontal_scroll_left();
 			me.sync_column_widths();
 			me.setup_sticky_columns();
+			me.sync_enhanced_slider();
 			me.set_horizontal_scroll_left(scroll_left);
 			me.update_page_header_sticky();
 		}, 100);
@@ -543,7 +806,7 @@ class Custom_Grid extends Grid {
 			const target = event?.target;
 			if (
 				target?.closest?.(
-					".awesomplete > ul, .awesomplete > [role='listbox'], .datepicker"
+					".awesomplete > ul, .awesomplete > [role='listbox'], .datepicker, .enhanced-grid-link-dropdown-pinned"
 				)
 			) {
 				return;
@@ -588,7 +851,9 @@ class Custom_Grid extends Grid {
 							</div>
 						</div>
 					</div>
-					<input type="range" min="0" max="100" value="0" class="enhanced-slider">
+					<div class="enhanced-scrollbar" aria-hidden="false">
+						<input type="range" min="0" max="0" value="0" step="1" class="enhanced-slider">
+					</div>
 				</div>
 				<div class="small form-clickable-section grid-footer">
 					<div class="flex justify-between">
@@ -635,18 +900,48 @@ class Custom_Grid extends Grid {
 
 		this.form_grid_container = this.wrapper.find(".form-grid-container");
 		this.form_grid_scroll_area = this.wrapper.find(".enhanced-grid-scroll-area");
+		this.enhanced_scrollbar = this.wrapper.find(".enhanced-scrollbar");
 		this.enhanced_slider = this.wrapper.find(".enhanced-slider");
 		let me = this;
 		this.enhanced_slider.on("input", function (event) {
 			me.set_horizontal_scroll_left(cint(event.target.value));
 		});
-		this.get_scroll_container().on(
-			"scroll",
-			frappe.utils.debounce(function () {
-				me.close_open_grid_dropdowns();
-				me.enhanced_slider.val(me.get_horizontal_scroll_left());
-			}, 10)
-		);
+		this.get_scroll_container().on("scroll", function () {
+			me.close_open_grid_dropdowns();
+			me.sync_enhanced_slider_value();
+		});
+		// Native awesomplete events — document capture is more reliable than jQuery bubble.
+		this._on_awesomplete_open = (e) => {
+			if (!me.wrapper?.[0]?.contains(e.target)) {
+				return;
+			}
+			me.form_grid_container.addClass("has-open-link-dropdown");
+			const $input = $(e.target);
+			requestAnimationFrame(() => {
+				me.pin_grid_link_dropdown($input);
+				requestAnimationFrame(() => me.reposition_pinned_link_dropdown($input));
+			});
+		};
+		this._on_awesomplete_close = (e) => {
+			if (me._pin_pointer_down) {
+				return;
+			}
+			if (
+				!me.wrapper?.[0]?.contains(e.target) &&
+				me._pinned_link_dropdown?.input_el !== e.target
+			) {
+				return;
+			}
+			// Let select finish, then restore the list node to its original parent.
+			setTimeout(() => me.unpin_grid_link_dropdown($(e.target)), 0);
+		};
+		document.addEventListener("awesomplete-open", this._on_awesomplete_open, true);
+		document.addEventListener("awesomplete-close", this._on_awesomplete_close, true);
+		this.wrapper.on("input", "input", (e) => {
+			if (me._pinned_link_dropdown?.input_el === e.target) {
+				me.reposition_pinned_link_dropdown($(e.target));
+			}
+		});
 		this.setup_sticky_listeners();
 		this.setup_add_row();
 
@@ -903,7 +1198,7 @@ class Custom_Grid extends Grid {
 
 
 	setup_scrollable_width() {
-		if (!this.form_grid_container?.[0]) {
+		if (!this.form_grid_container?.[0] || this._row_form_open) {
 			return;
 		}
 
@@ -911,46 +1206,85 @@ class Custom_Grid extends Grid {
 		this.visible_columns.forEach((column) => {
 			width += this.get_column_width(column[1]);
 		});
-		const container_width = this.form_grid_container[0].clientWidth;
-		const scroll_width = Math.max(width - container_width, 0);
-		const scroll_left = this.get_horizontal_scroll_left();
 
-		this.form_grid.css("min-width", `${width}px`);
-
-		if (scroll_width > 0) {
-			this.enhanced_slider.prop("max", scroll_width);
-			this.enhanced_slider.prop("style", "display:block");
-			this.set_horizontal_scroll_left(Math.min(scroll_left, scroll_width));
-		} else {
-			this.set_horizontal_scroll_left(0);
-			this.enhanced_slider.prop("max", 0);
-			this.enhanced_slider.prop("style", "display:none");
-			this.enhanced_slider.prop("value", 0);
-		}
+		this.form_grid.css({
+			"min-width": `${width}px`,
+			width: "max-content",
+		});
 
 		requestAnimationFrame(() => {
 			this.sync_column_widths();
 			this.setup_sticky_columns();
+			this.sync_enhanced_slider();
 			this.update_page_header_sticky();
 		});
 	}
 
-	verify_overflow_columns_width() {
-		if (!this.form_grid_container?.[0]) {
+	get_max_horizontal_scroll() {
+		const el = this.get_scroll_container()?.[0];
+		if (!el) {
+			return 0;
+		}
+		return Math.max(0, el.scrollWidth - el.clientWidth);
+	}
+
+	sync_enhanced_slider_value() {
+		if (!this.enhanced_slider?.length || this._row_form_open) {
+			return;
+		}
+		const max_scroll = this.get_max_horizontal_scroll();
+		if (max_scroll <= 0) {
+			return;
+		}
+		const scroll_left = Math.min(this.get_horizontal_scroll_left(), max_scroll);
+		this.enhanced_slider.val(scroll_left);
+	}
+
+	sync_enhanced_slider() {
+		if (!this.enhanced_slider?.length || this._row_form_open) {
 			return;
 		}
 
-		let width = 200;
-		this.visible_columns.forEach((column) => {
-			width += column[1] * 50 + 100;
-		});
+		const el = this.get_scroll_container()?.[0];
+		if (!el) {
+			return;
+		}
 
-		if (width > this.form_grid_container[0].clientWidth) {
+		const max_scroll = Math.max(0, el.scrollWidth - el.clientWidth);
+		if (max_scroll <= 0) {
+			this.enhanced_scrollbar?.css("display", "none");
+			this.enhanced_slider.css("display", "none").val(0).attr("max", 0);
+			return;
+		}
+
+		const thumb_pct = Math.min(
+			100,
+			Math.max(10, (el.clientWidth / Math.max(el.scrollWidth, 1)) * 100)
+		);
+		const scroll_left = Math.min(el.scrollLeft || 0, max_scroll);
+
+		this.enhanced_scrollbar?.css("display", "block");
+		this.enhanced_slider
+			.attr({ min: 0, max: max_scroll, step: 1 })
+			.val(scroll_left)
+			.css({
+				display: "block",
+				"--thumb-size": `${thumb_pct}%`,
+			});
+	}
+
+	verify_overflow_columns_width() {
+		if (!this.form_grid_container?.[0] || this._row_form_open) {
+			return;
+		}
+
+		const max_scroll = this.get_max_horizontal_scroll();
+		if (max_scroll > 0) {
 			this.form_grid_container.addClass("enhanced-grid-container");
-			this.enhanced_slider.prop("style", "display:block");
+			this.sync_enhanced_slider();
 		} else {
-			this.enhanced_slider.prop("style", "display:none");
-			this.enhanced_slider.prop("value", 0);
+			this.enhanced_scrollbar?.css("display", "none");
+			this.enhanced_slider.css("display", "none").val(0);
 		}
 	}
 
