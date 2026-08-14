@@ -865,10 +865,13 @@ class Custom_Grid extends Grid {
 
 		const $dropdown = $(dropdown);
 		const input_rect = input_el.getBoundingClientRect();
+		if (!input_rect.width && !input_rect.height) {
+			return;
+		}
+
 		const min_width = Math.max(250, Math.round(input_rect.width));
 		const width = Math.max(input_rect.width, min_width);
 		let left = input_rect.left;
-		let top = input_rect.bottom + 2;
 
 		if (left + width > window.innerWidth - 8) {
 			left = Math.max(8, input_rect.right - width);
@@ -877,20 +880,30 @@ class Custom_Grid extends Grid {
 			$dropdown.removeClass("awesomplete-align-right");
 		}
 
-		const max_height = Math.min(300, window.innerHeight - top - 12);
-		if (max_height < 120 && input_rect.top > 160) {
-			top = Math.max(8, input_rect.top - Math.min(300, input_rect.top - 8));
+		const gap = 2;
+		const viewport_pad = 8;
+		const space_below = window.innerHeight - input_rect.bottom - viewport_pad;
+		const space_above = input_rect.top - viewport_pad;
+		const measured_height = dropdown.scrollHeight || dropdown.offsetHeight || 0;
+		const list_height = measured_height > 0 ? Math.min(measured_height, 300) : 0;
+
+		// Standard select: open directly below the input. Flip tightly above only when
+		// the real list does not fit below (do not reserve a 300px hole).
+		let top = input_rect.bottom + gap;
+		let max_height = Math.min(300, Math.max(40, space_below));
+		if (list_height && space_below < list_height && space_above > space_below) {
+			max_height = Math.min(300, Math.max(40, space_above));
+			top = input_rect.top - Math.min(list_height, max_height) - gap;
 		}
 
-		// Above #freeze.grid-form (1020) and .form-in-grid (1021).
 		$dropdown.css({
 			position: "fixed",
-			top: `${top}px`,
+			top: `${Math.max(viewport_pad, top)}px`,
 			left: `${left}px`,
 			right: "auto",
 			width: `${width}px`,
 			minWidth: `${min_width}px`,
-			maxHeight: `${Math.max(120, max_height)}px`,
+			maxHeight: `${max_height}px`,
 			overflowY: "auto",
 			zIndex: 1060,
 			margin: 0,
@@ -1084,11 +1097,19 @@ class Custom_Grid extends Grid {
 			if (!me.wrapper?.[0]?.contains(e.target)) {
 				return;
 			}
+			// Row editor already uses standard in-place Frappe dropdowns.
+			if (me._row_form_open) {
+				return;
+			}
 			me.form_grid_container.addClass("has-open-link-dropdown");
 			const $input = $(e.target);
-			requestAnimationFrame(() => {
+			const pin_and_align = () => {
 				me.pin_grid_link_dropdown($input);
-				requestAnimationFrame(() => me.reposition_pinned_link_dropdown($input));
+				me.reposition_pinned_link_dropdown($input);
+			};
+			requestAnimationFrame(() => {
+				pin_and_align();
+				requestAnimationFrame(pin_and_align);
 			});
 		};
 		this._on_awesomplete_close = (e) => {
